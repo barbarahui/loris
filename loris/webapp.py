@@ -81,8 +81,10 @@ def create_app(debug=False, debug_jp2_transformer='kdu'):
         config['img.ImageCache']['cache_links'] = '/tmp/loris/cache/links'
         config['img.ImageCache']['cache_dp'] = '/tmp/loris/cache/img'
         config['img_info.InfoCache']['cache_dp'] = '/tmp/loris/cache/info'
-        config['resolver']['impl'] = 'SimpleFSResolver'
-        config['resolver']['src_img_root'] = path.join(project_dp,'tests','img')
+        #config['resolver']['impl'] = 'SimpleFSResolver'
+        #config['resolver']['src_img_root'] = path.join(project_dp,'tests','img')
+        config['resolver']['impl'] = 'UCLDCResolver'
+        config['resolver']['s3bucket'] = 'ucldc-nuxeo-ref-images'
         
         if debug_jp2_transformer == 'opj':
             from transforms import OPJ_JP2Transformer
