@@ -56,7 +56,7 @@ def create_app(debug=False, debug_jp2_transformer='kdu', config_file_path=''):
         config['img_info.InfoCache']['cache_dp'] = '/tmp/loris/cache/info'
         #config['resolver']['impl'] = 'SimpleFSResolver'
         #config['resolver']['src_img_root'] = path.join(project_dp,'tests','img')
-        config['resolver']['impl'] = 'UCLDCResolver'
+        config['resolver']['impl'] = 'loris.resolver.UCLDCResolver'
         config['resolver']['s3bucket'] = 'ucldc-nuxeo-ref-images'
         
         if debug_jp2_transformer == 'opj':
@@ -247,6 +247,7 @@ class Loris(object):
         '''
         module_name = '.'.join(qname.split('.')[:-1])
         class_name = qname.split('.')[-1] 
+        logger.debug('module_name: %s' % (module_name,))
         module = __import__(module_name, fromlist=[class_name])
         logger.debug('Imported %s' % (qname,))
         return getattr(module, class_name)
