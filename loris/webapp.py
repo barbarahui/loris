@@ -1,25 +1,10 @@
 #!/usr/bin/env python
 #-*- coding: utf-8 -*-
-"""
+'''
 webapp.py
 =========
 Implements IIIF 2.0 <http://iiif.io/api/image/2.0/> level 2
-
- Copyright (C) 2013-14 Jon Stroop
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
-
-"""
+'''
 # from ConfigParser import RawConfigParser
 from configobj import ConfigObj
 from datetime import datetime
@@ -43,30 +28,19 @@ import img
 import logging
 import random
 import re
-import resolver
 import string
 import transforms
 
-try:
-    import libuuid as uuid # faster. do pip install python-libuuid
-except ImportError:
-    import uuid
-
-# Loris's etc dir MUST either be a sibling to the loris/loris directory or at 
-# the below:
-ETC_DP = '/etc/loris'
-# We can figure out everything else from there.
-
 getcontext().prec = 25 # Decimal precision. This should be plenty.
 
-def create_app(debug=False, debug_jp2_transformer='kdu'):
+def create_app(debug=False, debug_jp2_transformer='kdu', config_file_path=''):
     global logger
     if debug:
         project_dp = path.dirname(path.dirname(path.realpath(__file__)))
 
         # change a few things, read the config and set up logging
-        config_fp = path.join(project_dp, 'etc', constants.CONFIG_FILE_NAME)
-        config = ConfigObj(config_fp, unrepr=True, interpolation=False)
+        config_file_path = path.join(project_dp, 'etc', 'loris2.conf')
+        config = ConfigObj(config_file_path, unrepr=True, interpolation=False)
         config['logging']['log_to'] = 'console'
         config['logging']['log_level'] = 'DEBUG'
         __configure_logging(config['logging'])
@@ -78,7 +52,6 @@ def create_app(debug=False, debug_jp2_transformer='kdu'):
         config['loris.Loris']['www_dp'] = path.join(project_dp, 'www')
         config['loris.Loris']['tmp_dp'] = '/tmp/loris/tmp'
         config['loris.Loris']['enable_caching'] = True
-        config['img.ImageCache']['cache_links'] = '/tmp/loris/cache/links'
         config['img.ImageCache']['cache_dp'] = '/tmp/loris/cache/img'
         config['img_info.InfoCache']['cache_dp'] = '/tmp/loris/cache/info'
         #config['resolver']['impl'] = 'SimpleFSResolver'
@@ -100,8 +73,7 @@ def create_app(debug=False, debug_jp2_transformer='kdu'):
             config['transforms']['jp2']['kdu_libs'] = path.join(project_dp, libkdu_dir)
 
     else:
-        config_fp = path.join(ETC_DP, constants.CONFIG_FILE_NAME)
-        config = ConfigObj(config_fp, unrepr=True, interpolation=False)
+        config = ConfigObj(config_file_path, unrepr=True, interpolation=False)
         __configure_logging(config['logging'])
         logger = logging.getLogger(__name__)
         logger.debug('Running in production mode.')
@@ -114,7 +86,6 @@ def create_app(debug=False, debug_jp2_transformer='kdu'):
             dirs_to_make.append(config['logging']['log_dir'])
         if config['loris.Loris']['enable_caching']:
             dirs_to_make.append(config['img.ImageCache']['cache_dp'])
-            dirs_to_make.append(config['img.ImageCache']['cache_links'])
             dirs_to_make.append(config['img_info.InfoCache']['cache_dp'])
         [makedirs(d) for d in dirs_to_make if not path.exists(d)]
     except OSError as ose: 
@@ -241,9 +212,8 @@ class Loris(object):
 
         if self.enable_caching:
             self.info_cache = InfoCache(self.app_configs['img_info.InfoCache']['cache_dp'])
-            cache_links = self.app_configs['img.ImageCache']['cache_links']
             cache_dp = self.app_configs['img.ImageCache']['cache_dp']
-            self.img_cache = img.ImageCache(cache_dp,cache_links)
+            self.img_cache = img.ImageCache(cache_dp)
 
     def _load_transformers(self):
         tforms = self.app_configs['transforms']
@@ -267,22 +237,27 @@ class Loris(object):
 
     def _load_resolver(self):
         impl = self.app_configs['resolver']['impl']
-        config = self.app_configs['resolver'].copy()
-        del config['impl']
-        Klass = getattr(resolver,impl)
-        instance = Klass(config)
-        logger.debug('Loaded Resolver %s' % (impl,))
-        return instance
+        ResolverClass = self._import_class(impl)
+        resolver_config =  self.app_configs['resolver'].copy()
+        del resolver_config['impl']
+        return ResolverClass(resolver_config)
+
+    def _import_class(self, qname):
+        '''Imports a class AND returns it (the class, not an instance).
+        '''
+        module_name = '.'.join(qname.split('.')[:-1])
+        class_name = qname.split('.')[-1] 
+        module = __import__(module_name, fromlist=[class_name])
+        logger.debug('Imported %s' % (qname,))
+        return getattr(module, class_name)
 
     def wsgi_app(self, environ, start_response):
         request = Request(environ)
         response = self.route(request)
         return response(environ, start_response)
 
-
     def route(self, request):
         base_uri, ident, params, request_type = self._dissect_uri(request)
-
         # index.txt
         if ident == '': 
             return self.get_index(request)
@@ -538,7 +513,7 @@ class Loris(object):
                 image_request.info = info
                 # we need to do the above to set the canonical link header
 
-                canonical_uri = '%s%s' % (request.url_root, image_request.c14n_request_path)
+                canonical_uri = '%s%s' % (request.url_root, image_request.canonical_request_path)
                 r.headers['Link'] = '%s,<%s>;rel="canonical"' % (r.headers['Link'], canonical_uri,)
                 return r
         else:
@@ -546,7 +521,6 @@ class Loris(object):
 
                 # 1. Resolve the identifier
                 src_fp, src_format = self.resolver.resolve(ident)
-
 
                 # 2. Hand the Image object its info
                 info = self._get_info(ident, request, base_uri, src_fp, src_format)[0]
@@ -559,8 +533,8 @@ class Loris(object):
                 # 4. Redirect if appropriate
                 if self.redirect_canonical_image_request:
                     if not image_request.is_canonical:
-                        logger.debug('Attempting redirect to %s' % (image_request.c14n_request_path,))
-                        r.headers['Location'] = image_request.c14n_request_path
+                        logger.debug('Attempting redirect to %s' % (image_request.canonical_request_path,))
+                        r.headers['Location'] = image_request.canonical_request_path
                         r.status_code = 301
                         return r
 
@@ -594,7 +568,7 @@ possible that there was a problem with the source file
         r.status_code = 200
         r.last_modified = datetime.utcfromtimestamp(path.getctime(fp))
         r.headers['Content-Length'] = path.getsize(fp)
-        canonical_uri = '%s%s' % (request.url_root, image_request.c14n_request_path)
+        canonical_uri = '%s%s' % (request.url_root, image_request.canonical_request_path)
         r.headers['Link'] = '%s,<%s>;rel="canonical"' % (r.headers['Link'], canonical_uri,)
         r.response = file(fp)
 
@@ -614,9 +588,8 @@ possible that there was a problem with the source file
         '''
         # figure out paths, make dirs
         if self.enable_caching:
-            p = path.join(self.img_cache.cache_root, Loris._get_uuid_path())
-            target_dp = path.dirname(p)
-            target_fp = '%s.%s' % (p, image_request.format)
+            target_fp = self.img_cache.get_cache_path(image_request)
+            target_dp = path.dirname(target_fp)
             if not path.exists(target_dp):
                 makedirs(target_dp)
         else:
@@ -635,25 +608,18 @@ possible that there was a problem with the source file
             self.img_cache[image_request] = target_fp
         return target_fp
 
-
-    @staticmethod
-    def _get_uuid_path():
-        # Make a pairtree-like path from a uuid
-        # Wonder if this should be time.time() plus some random check chars,
-        # just to make it shorter
-        _id = uuid.uuid1().hex
-        return path.sep.join([_id[i:i+2] for i in range(0, len(_id), 2)])
-
-
 if __name__ == '__main__':
     from werkzeug.serving import run_simple
+    import sys
     extra_files = []
 
     project_dp = path.dirname(path.dirname(path.realpath(__file__)))
     conf_fp = path.join(project_dp, 'etc', 'loris.conf')
     extra_files.append(conf_fp)
 
-    app = create_app(debug=True, debug_jp2_transformer='kdu') # or 'opj'
+    sys.path.append(path.join(project_dp)) # to find any local resolvers
+
+    app = create_app(debug=True) # or 'opj'
 
     run_simple('localhost', 5004, app, use_debugger=True, use_reloader=True,
         extra_files=extra_files)

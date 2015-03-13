@@ -189,7 +189,7 @@ class _AbstractJP2Transformer(_AbstractTransformer):
         # Scales from from JP2 levels, so even though these are from the tiles
         # info.json, it's easier than using the sizes from info.json
         scales = [s for t in image_request.info.tiles for s in t['scaleFactors']]
-        is_full_region = image_request.region_param.uri_value == FULL_MODE
+        is_full_region = image_request.region_param.mode == FULL_MODE
         arg = None
         if scales and is_full_region:
             full_w = image_request.info.width
@@ -212,19 +212,19 @@ class OPJ_JP2Transformer(_AbstractJP2Transformer):
 
     @staticmethod
     def local_opj_decompress_path():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         return 'bin/%s/%s/opj_decompress' % (platform.system(),platform.machine())
 
     @staticmethod
     def local_libopenjp2_dir():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         return 'lib/%s/%s' % (platform.system(),platform.machine())
 
     @staticmethod
     def libopenjp2_name():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         system = platform.system()
         if system == 'Linux':
@@ -234,7 +234,7 @@ class OPJ_JP2Transformer(_AbstractJP2Transformer):
 
     @staticmethod
     def local_libopenjp2_path():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         dir_ = OPJ_JP2Transformer.local_libopenjp2_dir()
         name = OPJ_JP2Transformer.libopenjp2_name()
@@ -323,19 +323,19 @@ class KakaduJP2Transformer(_AbstractJP2Transformer):
 
     @staticmethod
     def local_kdu_expand_path():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         return 'bin/%s/%s/kdu_expand' % (platform.system(),platform.machine())
 
     @staticmethod
     def local_libkdu_dir():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         return 'lib/%s/%s' % (platform.system(),platform.machine())
 
     @staticmethod
     def libkdu_name():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         system = platform.system()
         if system == 'Linux':
@@ -345,7 +345,7 @@ class KakaduJP2Transformer(_AbstractJP2Transformer):
 
     @staticmethod
     def local_libkdu_path():
-        '''Only used in dev, tests, and by setup.py
+        '''Only used in dev and tests.
         '''
         dir_ = KakaduJP2Transformer.local_libkdu_dir()
         name = KakaduJP2Transformer.libkdu_name()
@@ -374,11 +374,6 @@ class KakaduJP2Transformer(_AbstractJP2Transformer):
         # kdu writes to this:
         fifo_fp = self._make_tmp_fp()
 
-        # make the named pipe
-        mkfifo_call = '%s %s' % (self.mkfifo, fifo_fp)
-        logger.debug('Calling %s' % (mkfifo_call,))
-        resp = subprocess.check_call(mkfifo_call, shell=True)
-
         # kdu command
         q = '-quiet'
         t = '-num_threads %s' % (self.num_threads,)
@@ -391,10 +386,14 @@ class KakaduJP2Transformer(_AbstractJP2Transformer):
 
         kdu_cmd = ' '.join((self.kdu_expand,q,i,t,reg,red,o))
 
-        logger.debug('Calling: %s' % (kdu_cmd,))
+        # make the named pipe
+        mkfifo_call = '%s %s' % (self.mkfifo, fifo_fp)
+        logger.debug('Calling %s' % (mkfifo_call,))
+        resp = subprocess.check_call(mkfifo_call, shell=True)
 
         try:
             # Start the kdu shellout. Blocks until the pipe is empty
+            logger.debug('Calling: %s' % (kdu_cmd,))
             kdu_expand_proc = subprocess.Popen(kdu_cmd, shell=True, bufsize=-1, 
                 stderr=subprocess.PIPE, env=self.env)
 
